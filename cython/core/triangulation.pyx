@@ -436,7 +436,7 @@ cdef class Triangulation(object):
         new_tri.set_c_triangulation(copy_c_triangulation)
         return new_tri
 
-    def randomize(self, blowup_multiple=4, passes_at_fours=6):
+    def randomize(self, blowup_multiple=4, passes_at_fours=6, local_search = 0):
         """
         Perform random Pachner moves on the underlying triangulation,
         including some initial 3 -> 2 moves that increase the number of
@@ -447,8 +447,9 @@ cdef class Triangulation(object):
         """
         if self.c_triangulation is NULL:
             return
-        randomize_triangulation_with_options(self.c_triangulation, passes_at_fours, blowup_multiple)
+        x = randomize_triangulation_with_options(self.c_triangulation, passes_at_fours, blowup_multiple, local_search)
         self._cache.clear(message='randomize')
+        return x
 
     def simplify(self, passes_at_fours=6):
         """

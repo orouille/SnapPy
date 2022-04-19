@@ -2382,10 +2382,11 @@ extern void randomize_triangulation(Triangulation *manifold);
  */
 
 
-extern void randomize_triangulation_with_options(
+extern double randomize_triangulation_with_options(
     Triangulation   *manifold,
     int order_four_iterations,
-    int randomization_multiple);
+    int randomization_multiple,
+    unsigned short local_search);
 
 /**<
  * Same as randomize_triangulation but with more control.

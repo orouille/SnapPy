@@ -67,6 +67,8 @@
  *  in SnapPea.h.  It depends on some of the typedefs there.
  */
 
+#pragma once
+
 #include "kernel_namespace.h"
 
 typedef struct TriangulationData    TriangulationData;

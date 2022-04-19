@@ -166,6 +166,8 @@
 
 #include "kernel.h"
 #include <stdlib.h>     /* needed for rand() */
+#include <stdio.h>
+#include <time.h>
 #include "kernel_namespace.h"
 
 /*
@@ -198,7 +200,7 @@ static FuncResult   try_adjacent_fours(Tetrahedron *tet0, FaceIndex f0, FaceInde
 static FuncResult   create_new_order_four(EdgeClass *edge, EdgeClass **where_to_resume, int *num_tetrahedra_ptr);
 static Boolean      four_tetrahedra_are_distinct(PositionedTet ptet);
 static void         set_inverse_neighbor_and_gluing(Tetrahedron *tet, FaceIndex f);
-
+void local_search_CHS(Triangulation* manifold);
 
 void basic_simplification(Triangulation *manifold){
     basic_simplification_with_options(manifold, ORDER_FOUR_ITERATIONS_IN_SIMPLIFY);
@@ -304,15 +306,21 @@ void basic_simplification_with_options(
 void randomize_triangulation(Triangulation* manifold){
     randomize_triangulation_with_options(manifold,
 					 ORDER_FOUR_ITERATIONS_IN_SIMPLIFY,
-					 RANDOMIZATION_MULTIPLE);
+					 RANDOMIZATION_MULTIPLE,
+                     0);
 }
     
-
-void randomize_triangulation_with_options(
+double randomize_triangulation_with_options(
     Triangulation   *manifold,
     int order_four_iterations,
-    int randomization_multiple)
+    int randomization_multiple,
+    unsigned short local_search)
 {
+    clock_t start, end;
+    double cpu_time_used;
+    start = clock();
+
+
     SolutionType    original_solution_type[2];
     int             count;
     Boolean         hyperbolic_structure_was_removed;
@@ -374,8 +382,18 @@ void randomize_triangulation_with_options(
     }
 
     basic_simplification_with_options(manifold, order_four_iterations);
-}
 
+
+    if (0<local_search) {
+        if (manifold->solution_type[complete] != geometric_solution) {
+            local_search_CHS(manifold);
+        }
+    }
+
+    end = clock();
+    cpu_time_used = ((double) (end - start)) / CLOCKS_PER_SEC;
+    return cpu_time_used;
+}
 
 static Tetrahedron *get_tet(
     Triangulation   *manifold,
@@ -2672,6 +2690,380 @@ void all_tetrahedra_changeable(Triangulation *manifold){
          tet = tet->next){
 	tet->unchangeable = 0;
     }
+}
+
+
+
+
+
+
+
+
+
+
+#define MAX_NEIGHBORHOOD_SIZE 7;
+#define MAX_NEG_TET 4;
+
+void write_int(int value,FILE *fp){
+    char str[1000];
+    sprintf(str, "%d", value);
+    fputs(str, fp );
+    fflush(fp);
+}
+
+int is_valid_move(Tetrahedron *tet0, FaceIndex face,FILE * logfile){
+    Tetrahedron *tet1 = tet0->neighbor[face];
+    Permutation gluing  = tet0->gluing[face];
+    FaceIndex face1 = EVALUATE(gluing, face);
+    FaceIndex f;
+    FaceIndex f1;
+    char valid = 1;
+    if (tet0->index==tet1->index){
+        return 0;
+    }
+    for (f=0; f<4;++f) {
+        if(f==face) {
+            continue;
+        }
+        f1 = EVALUATE(gluing,f);
+        if(PI-0.001<tet0->shape[complete]->cwl[ultimate][edge3_between_faces[face][f]].log.imag
+            + tet1->shape[complete]->cwl[ultimate][edge3_between_faces[face1][f1]].log.imag) {
+            valid = 0;
+            break;
+        }
+    }
+    return valid;
+}
+
+
+// simplify the edge
+void simplify_edge(Triangulation* manifold, Tetrahedron* tet0, EdgeIndex e0, int* fail_moves,FILE * logfile) {
+
+    int move_done = 0;
+    FaceIndex       front, back, temp;
+    Permutation     gluing;
+    Tetrahedron *tet;
+    EdgeIndex e;
+
+    char fail;
+
+    //to switch the direction
+    char direction = 0;
+    char new_order =tet0->edge_class[e0]->order;
+    char old_order = new_order+1;
+    while(new_order>3 && old_order>new_order) {
+        old_order = new_order;
+        fail =1;
+        tet = tet0;
+        e = e0;
+        if (direction==0){
+            front   = one_face_at_edge[e];
+            back    = other_face_at_edge[e];
+        } else {
+            back    = one_face_at_edge[e];
+            front   = other_face_at_edge[e];
+        }
+
+        direction = 0;//(direction +1) % 2;
+        do {
+            gluing  = tet->gluing[front];
+            tet     = tet->neighbor[front];
+            temp    = front;
+            front   = EVALUATE(gluing, back);
+            back    = EVALUATE(gluing, temp);
+            e       = edge_between_faces[front][back];
+
+            if(is_valid_move(tet,front,logfile)){
+                if(two_to_three(tet,front,&manifold->num_tetrahedra)== func_OK) {
+                    move_done += 1;
+                    fail = 0;
+                    break;
+                }
+            }
+
+        } while (tet != tet0);
+
+        if (fail) {
+            break;
+        }
+        new_order = tet0->edge_class[e0]->order;
+    }
+    fail = 1;
+
+    if (tet0->edge_class[e0]->order==3){
+        EdgeClass *where_to_resume;
+        if (three_to_two(tet0->edge_class[e0],&where_to_resume,&manifold->num_tetrahedra) == func_OK){
+            fail =0;
+            move_done += 1;
+        }
+    }
+    fail_moves[0] = fail;
+    fail_moves[1] = move_done;
+}
+
+char good_edge(Tetrahedron* tet0, EdgeIndex e0) {
+    FaceIndex       front,
+                    back,
+                    temp;
+    Permutation     gluing;
+    Tetrahedron *tet;
+    EdgeIndex e;
+    short max_neighborhood_size = MAX_NEIGHBORHOOD_SIZE;
+    short order = tet0->edge_class[e0]->order;
+
+    if(order>1+max_neighborhood_size){
+        return 0;
+    }
+    tet = tet0;
+    e = e0;
+    front   = one_face_at_edge[e0];
+    back    = other_face_at_edge[e0];
+
+    gluing  = tet->gluing[front];
+    tet     = tet->neighbor[front];
+    temp    = front;
+    front   = EVALUATE(gluing, back);
+    back    = EVALUATE(gluing, temp);
+    e       = edge_between_faces[front][back];
+
+    do {
+        if(0>=tet->shape[complete]->cwl[ultimate][0].rect.imag){
+            return 0;
+        }
+        gluing  = tet->gluing[front];
+        tet     = tet->neighbor[front];
+        temp    = front;
+        front   = EVALUATE(gluing, back);
+        back    = EVALUATE(gluing, temp);
+        e       = edge_between_faces[front][back];
+
+    } while (tet != tet0);
+    if (e != e0) {
+        return 0; // same tet, different edge
+    }
+    return 1;
+}
+
+
+//check if the tetrahedron admits an edge of order<MAX_NEIGHBORHOOD_SIZE that can be simplified, returns the index of the edge or 9 if none available
+EdgeIndex small_neighborhood(Tetrahedron* tet0,FILE * logfile) {
+    short max_neighborhood_size = MAX_NEIGHBORHOOD_SIZE;
+
+    EdgeIndex e0;
+    EdgeIndex best_edge=9;
+    char best_double = 1;
+    char current_double;
+    double best_arg=10;
+    double current_arg;
+
+
+    FaceIndex       front,
+                    back,
+                    temp;
+    Permutation     gluing;
+    Tetrahedron *tet;
+    EdgeIndex e;
+    short index;
+    short fail;
+
+
+    Tetrahedron* neighborhood[max_neighborhood_size];
+
+    for(e0=0;e0<6;++e0){
+        short order = tet0->edge_class[e0]->order;
+        if(order>1+max_neighborhood_size){
+            continue;
+        }
+        tet = tet0;
+        e = e0;
+        front   = one_face_at_edge[e0];
+        back    = other_face_at_edge[e0];
+        index = 0;
+
+
+        gluing  = tet->gluing[front];
+        tet     = tet->neighbor[front];
+        temp    = front;
+        front   = EVALUATE(gluing, back);
+        back    = EVALUATE(gluing, temp);
+        e       = edge_between_faces[front][back];
+
+        do {
+            neighborhood[index] = tet;
+            gluing  = tet->gluing[front];
+            tet     = tet->neighbor[front];
+            temp    = front;
+            front   = EVALUATE(gluing, back);
+            back    = EVALUATE(gluing, temp);
+            e       = edge_between_faces[front][back];
+            index +=1;
+        } while (tet != tet0);
+        if (e != e0) {
+            continue; // same tet, different edge
+        }
+        fail = 0;
+        //check neg
+        for (index = 0;index==order;++index){
+            if(0>=neighborhood[index]->shape[complete]->cwl[ultimate][0].rect.imag){
+                fail = 1;
+                break;
+            }
+        }
+        if (fail) {continue;}
+
+        //check double
+        short index2 =0;
+        for (index = 0;index==order;++index){
+            for (index2=index +1;index2==order;++index2) {
+                if(neighborhood[index] == neighborhood[index2]){
+                    current_double =1;
+                    goto double_detected;
+                }
+            }
+        }
+        current_double = 0;
+        double_detected:;
+        current_arg= 10;
+
+        for (index = 0;index==order;++index){
+            double arg0 = neighborhood[index]->shape[complete]->cwl[ultimate][0].log.imag;
+            double arg1 = neighborhood[index]->shape[complete]->cwl[ultimate][1].log.imag;
+            double arg2 = neighborhood[index]->shape[complete]->cwl[ultimate][2].log.imag;
+            double arg = arg0;
+            if (arg>arg1){arg=arg1;}
+            if (arg>arg2){arg=arg2;}
+
+            if(current_arg>arg){
+                current_arg = arg;
+            }
+        }
+
+        if(current_double<best_double) {
+            best_edge = e0;
+        } else if (current_arg<best_arg) {
+            best_edge = e0;
+        }
+    }
+    return best_edge;
+
+}
+
+//count neg tet
+int count_neg(Triangulation* manifold) {
+    Tetrahedron *tet;
+    short position = 0;
+    for ( tet = manifold->tet_list_begin.next;
+            tet != &manifold->tet_list_end;
+            tet = tet->next){
+        if(0>tet->shape[complete]->cwl[ultimate][0].rect.imag) {
+            ++position;
+        }
+    }
+    return position;
+}
+
+//update neg_tet, assuming the next size is smaller
+int update_neg_tet(Triangulation* manifold,Tetrahedron **neg_tet,int max) {
+    Tetrahedron *tet;
+    short position = 0;
+    for ( tet = manifold->tet_list_begin.next;
+            tet != &manifold->tet_list_end;
+            tet = tet->next){
+        if(0>tet->shape[complete]->cwl[ultimate][0].rect.imag) {
+            if(position>max){
+                position = -1;
+                break;
+            }
+            neg_tet[position] = tet;
+            ++position;
+        }
+    }
+    return position;
+}
+
+void local_search_CHS(Triangulation* manifold) {
+    FILE *logfile;
+    //logfile = fopen("mylogfile.txt", "w");
+
+    unsigned int uptime = manifold->num_tetrahedra+100;
+    unsigned int neg_tet_num = count_neg(manifold);
+    Tetrahedron *curr_tet;
+    int fail_moves[2] = {0,0};
+
+    unsigned int max_neg_tet = MAX_NEG_TET;
+	if (neg_tet_num>max_neg_tet) {
+        //fclose( logfile );
+        return;
+    }
+
+    max_neg_tet = neg_tet_num;
+    unsigned int position = 0;
+    Tetrahedron* neg_tet[neg_tet_num];
+
+    for ( curr_tet = manifold->tet_list_begin.next;
+            curr_tet != &manifold->tet_list_end;
+            curr_tet = curr_tet->next){
+        if(0>curr_tet->shape[complete]->cwl[ultimate][0].rect.imag) {
+            neg_tet[position] = curr_tet;
+            ++position;
+        }
+    }
+
+
+    unsigned int moves_count = 0;
+    unsigned int neg_tet_num_old =neg_tet_num+1;
+    int simplification_result;
+
+    while (neg_tet_num_old>neg_tet_num && neg_tet_num>0 && moves_count<uptime) {
+        neg_tet_num_old = neg_tet_num;
+        for(position = 0;position<neg_tet_num;++position) {
+            simplification_result =1;
+            for(EdgeIndex e0 = 0;e0<6;++e0) {
+                if (!good_edge(neg_tet[position],e0)){
+                    continue;
+                }
+                simplify_edge(manifold,neg_tet[position],e0,fail_moves,logfile);
+                simplification_result = fail_moves[0];
+                moves_count += fail_moves[1];
+                if(simplification_result==0) {
+                    break;
+                }
+            }
+
+            //something simplified
+            if(simplification_result==0) {
+                break;
+            }
+        }
+        // end of loop and nothing simplified
+        if(simplification_result==1) {
+            break;
+        }
+
+        //update neg_tet_num and neg_tet
+        neg_tet_num = update_neg_tet(manifold,neg_tet,max_neg_tet);
+        if (neg_tet_num ==-1) {
+            break;
+        }
+
+//         fputs("\n end loop ", logfile );
+//         write_int(logfile,neg_tet_num_old);fputs(" ", logfile );
+//         write_int(logfile,neg_tet_num);fputs(" ", logfile );
+//         write_int(logfile,moves_count);fputs(" ", logfile );
+
+//         for(int i=0;i<neg_tet_num;++i){
+//             fputs("\n", logfile );
+//             write_int(logfile,neg_tet[i]->index);
+//         }
+//         fputs("\n", logfile );
+
+    }
+    if(neg_tet_num==0){
+        polish_hyperbolic_structures(manifold);
+    }
+    /*write_int(logfile,moves_count);
+    fputs("\n\n\n", logfile );*/
+    //fclose( logfile );
 }
 
 

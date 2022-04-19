@@ -660,8 +660,8 @@ cdef extern from "SnapPea.h":
     extern void basic_simplification(c_Triangulation *manifold) except *
     extern void basic_simplification_with_options(c_Triangulation *manifold, int order_four_iterations) except *
     extern void randomize_triangulation(c_Triangulation *manifold) except *
-    extern void randomize_triangulation_with_options(c_Triangulation *manifold, int order_four_iterations,
-                                                        int randomization_multiple) except *
+    extern double randomize_triangulation_with_options(c_Triangulation *manifold, int order_four_iterations,
+                                                        int randomization_multiple, unsigned short local_search) except *
     extern void unchangeable_tetrahedra(c_Triangulation *manifold, int* marked) except *
     extern void all_tetrahedra_changeable(c_Triangulation *manifold) except *
     extern Complex sl2c_determinant(SL2CMatrix m) except *
