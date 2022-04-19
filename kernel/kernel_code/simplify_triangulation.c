@@ -2986,7 +2986,7 @@ void local_search_CHS(Triangulation* manifold) {
     //logfile = fopen("mylogfile.txt", "w");
 
     unsigned int uptime = manifold->num_tetrahedra+100;
-    unsigned int neg_tet_num = count_neg(manifold);
+    int neg_tet_num = count_neg(manifold);
     Tetrahedron *curr_tet;
     int fail_moves[2] = {0,0};
 
@@ -3011,7 +3011,7 @@ void local_search_CHS(Triangulation* manifold) {
 
 
     unsigned int moves_count = 0;
-    unsigned int neg_tet_num_old =neg_tet_num+1;
+    int neg_tet_num_old =neg_tet_num+1;
     int simplification_result;
 
     while (neg_tet_num_old>neg_tet_num && neg_tet_num>0 && moves_count<uptime) {
